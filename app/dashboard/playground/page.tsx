@@ -8,6 +8,9 @@ import { Slider } from '@/components/ui/slider-number-flow';
 import { Tooltip } from '@/components/ui/tooltip-card';
 import { getUserQuotas, sendChatCompletionStream, type UserQuotaItem, type ChatMessage } from '@/lib/api';
 import { toast } from 'sonner';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
 import {
   MessageBranch,
   MessageBranchContent,
@@ -48,7 +51,7 @@ import {
   PromptInputActionAddAttachments,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input';
-import { CopyIcon, TrashIcon, EditIcon, CheckIcon as CheckIconLucide, XIcon, PlusIcon } from 'lucide-react';
+import { CopyIcon, TrashIcon, EditIcon, CheckIcon as CheckIconLucide, XIcon, PlusIcon, SlidersHorizontalIcon } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import {
   ModelSelector,
@@ -116,6 +119,8 @@ const formatModelName = (modelName: string): string => {
 };
 
 export default function PlaygroundPage() {
+  const isMobile = useIsMobile();
+  const [configSheetOpen, setConfigSheetOpen] = useState(false);
   const [models, setModels] = useState<Array<{
     id: string;
     name: string;
@@ -408,16 +413,9 @@ export default function PlaygroundPage() {
     }
   }, [editingContent]);
 
-  return (
-    <div className="flex gap-4 py-4 md:gap-6 md:py-6 h-[calc(100vh-var(--header-height)-2rem)] px-4 lg:px-6">
-      {/* 左侧：模型配置 */}
-      <Card className="w-80 shrink-0 flex flex-col">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 pb-8">
-            模型参数
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-12 overflow-y-auto overflow-x-hidden h-full">
+  // 配置面板内容组件
+  const ConfigPanel = () => (
+    <div className="space-y-12 overflow-y-auto overflow-x-hidden h-full px-1">
           {/* Temperature */}
           <div className="space-y-10">
             <Label>
@@ -522,18 +520,54 @@ export default function PlaygroundPage() {
               aria-label="Presence Penalty"
             />
           </div>
-        </CardContent>
-      </Card>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col md:flex-row gap-4 py-2 md:py-4 md:gap-6 md:py-6 h-[calc(100vh-var(--header-height)-2rem)] px-2 md:px-4 lg:px-6">
+      {/* 桌面端：左侧配置面板 */}
+      {!isMobile && (
+        <Card className="w-80 shrink-0 flex flex-col">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 pb-8">
+              模型参数
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4">
+            <ConfigPanel />
+          </CardContent>
+        </Card>
+      )}
 
       {/* 右侧：AI Elements 聊天界面 */}
       <div className="relative flex size-full flex-col overflow-hidden rounded-lg border bg-card">
+        {/* 移动端配置按钮 */}
+        {isMobile && (
+          <div className="absolute top-2 right-2 z-10">
+            <Sheet open={configSheetOpen} onOpenChange={setConfigSheetOpen}>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8">
+                  <SlidersHorizontalIcon className="h-4 w-4" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[85vw] sm:w-[400px] p-0">
+                <SheetHeader className="p-4 pb-0">
+                  <SheetTitle>模型参数</SheetTitle>
+                </SheetHeader>
+                <div className="p-4 overflow-y-auto h-full">
+                  <ConfigPanel />
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        )}
         <StickyBanner className="bg-gradient-to-b from-blue-500 to-blue-600">
-          <p className="mx-0 max-w-[90%] text-white drop-shadow-md">
+          <p className="mx-0 text-white drop-shadow-md text-sm md:text-base">
             我们不会存储您的对话。一旦刷新，这些信息将会丢失。
           </p>
         </StickyBanner>
         <Conversation>
-          <ConversationContent>
+          <ConversationContent className="gap-4 md:gap-8 p-2 md:p-4">
             {messages.length === 0 ? (
               <div className="flex h-full items-center justify-center text-muted-foreground">
               </div>
@@ -603,7 +637,7 @@ export default function PlaygroundPage() {
                             )}
                           </MessageContent>
                           {editingMessageId !== version.id && streamingMessageId !== version.id && (
-                            <MessageToolbar className={`${message.from === 'user' ? 'justify-end' : ''} ${isLastMessage ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                            <MessageToolbar className={`${message.from === 'user' ? 'justify-end' : ''} ${isLastMessage || isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
                               <MessageActions>
                                 <MessageAction
                                   onClick={() => handleCopyMessage(version.content)}
@@ -638,8 +672,8 @@ export default function PlaygroundPage() {
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
-        <div className="grid shrink-0 gap-4 pt-4">
-          <div className="w-full px-4 pb-4">
+        <div className="grid shrink-0 gap-2 md:gap-4 pt-2 md:pt-4">
+          <div className="w-full px-2 md:px-4 pb-2 md:pb-4">
             <PromptInputProvider>
               <PromptInput
                 onSubmit={handleSubmit}
@@ -673,12 +707,12 @@ export default function PlaygroundPage() {
                       open={modelSelectorOpen}
                     >
                       <ModelSelectorTrigger asChild>
-                        <PromptInputButton>
+                        <PromptInputButton className="max-w-[120px] md:max-w-none">
                           {selectedModelData?.chefSlug && (
                             <ModelSelectorLogo provider={selectedModelData.chefSlug} />
                           )}
                           {selectedModelData?.name && (
-                            <ModelSelectorName>
+                            <ModelSelectorName className="hidden sm:inline">
                               {selectedModelData.name}
                             </ModelSelectorName>
                           )}

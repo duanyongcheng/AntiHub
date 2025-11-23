@@ -353,9 +353,9 @@ export default function AccountsPage() {
         {/* 账号列表 */}
         <Toaster ref={toasterRef} defaultPosition="top-right" />
         <Card>
-          <CardHeader>
-            <CardTitle>我的账号</CardTitle>
-            <CardDescription>
+          <CardHeader className="text-left">
+            <CardTitle className="text-left">我的账号</CardTitle>
+            <CardDescription className="text-left">
               共 {accounts.length} 个账号
             </CardDescription>
           </CardHeader>
@@ -529,65 +529,76 @@ export default function AccountsPage() {
 
       {/* 配额查看 Dialog */}
       <Dialog open={isQuotaDialogOpen} onOpenChange={setIsQuotaDialogOpen}>
-        <DialogContent className="sm:max-w-[900px]">
-          <DialogHeader>
-            <DialogTitle>账号配额详情</DialogTitle>
-            <DialogDescription>
+        <DialogContent className="max-w-[95vw] sm:max-w-[900px] max-h-[90vh] p-0">
+          <DialogHeader className="px-4 pt-6 pb-2 md:px-6 text-left">
+            <DialogTitle className="text-left">账号配额详情</DialogTitle>
+            <DialogDescription className="break-all text-left">
               账号 ID: {currentAccount?.cookie_id}
             </DialogDescription>
           </DialogHeader>
           
-          <div className="py-4">
+          <div className="px-4 pb-6 md:px-6 overflow-y-auto max-h-[calc(90vh-120px)]">
             {isLoadingQuotas ? (
               <div className="flex items-center justify-center py-12">
                 <MorphingSquare message="加载配额信息..." />
               </div>
             ) : quotas && Array.isArray(quotas) && quotas.length > 0 ? (
-              <div className="overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="min-w-[180px]">模型名称</TableHead>
-                      <TableHead className="min-w-[100px]">当前配额</TableHead>
-                      <TableHead className="min-w-[80px]">状态</TableHead>
-                      <TableHead className="min-w-[150px]">配额重置时间</TableHead>
-                      <TableHead className="text-right min-w-[80px]">操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {quotas.map((quota: any) => (
-                      <TableRow key={quota.quota_id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            {getModelIcon(quota.model_name)}
-                            <span className="font-medium whitespace-nowrap">{getModelDisplayName(quota.model_name)}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-mono text-sm whitespace-nowrap">
-                          {parseFloat(quota.quota).toFixed(4)}
-                        </TableCell>
-                        <TableCell>
-                          <span className={quota.status === 1 ? 'text-green-600 whitespace-nowrap' : 'text-muted-foreground whitespace-nowrap'}>
-                            {quota.status === 1 ? '正常' : '禁用'}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                          {quota.reset_time
-                            ? new Date(quota.reset_time).toLocaleString('zh-CN')
-                            : '无限制'
-                          }
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Switch
-                            isSelected={quota.status === 1}
-                            onChange={() => handleToggleQuotaStatus(quota.model_name, quota.status)}
-                            className="scale-75"
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+              <div className="overflow-x-auto">
+                <div className="inline-block min-w-full align-middle px-2 md:px-0">
+                  <div className="overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-[160px] sticky left-0 bg-background z-10">模型名称</TableHead>
+                          <TableHead className="min-w-[90px]">配额</TableHead>
+                          <TableHead className="min-w-[70px]">状态</TableHead>
+                          <TableHead className="min-w-[140px]">重置时间</TableHead>
+                          <TableHead className="text-right min-w-[70px] sticky right-0 bg-background z-10">操作</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {quotas.map((quota: any) => (
+                          <TableRow key={quota.quota_id}>
+                            <TableCell className="sticky left-0 bg-background z-10">
+                              <div className="flex items-center gap-2">
+                                <div className="shrink-0">
+                                  {getModelIcon(quota.model_name)}
+                                </div>
+                                <span className="font-medium text-sm">{getModelDisplayName(quota.model_name)}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs md:text-sm whitespace-nowrap">
+                              {parseFloat(quota.quota).toFixed(4)}
+                            </TableCell>
+                            <TableCell>
+                              <span className={`text-xs md:text-sm ${quota.status === 1 ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                {quota.status === 1 ? '正常' : '禁用'}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-xs md:text-sm text-muted-foreground whitespace-nowrap">
+                              {quota.reset_time
+                                ? new Date(quota.reset_time).toLocaleString('zh-CN', {
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit'
+                                  })
+                                : '无限制'
+                              }
+                            </TableCell>
+                            <TableCell className="text-right sticky right-0 bg-background z-10">
+                              <Switch
+                                isSelected={quota.status === 1}
+                                onChange={() => handleToggleQuotaStatus(quota.model_name, quota.status)}
+                                className="scale-75"
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
