@@ -6,7 +6,10 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider-number-flow';
 import { Tooltip } from '@/components/ui/tooltip-card';
-import { getUserQuotas, sendChatCompletionStream, type UserQuotaItem, type ChatMessage } from '@/lib/api';
+import { sendChatCompletionStream, generateImage, type ChatMessage, type ImageAspectRatio, type ImageSize, type ApiType } from '@/lib/api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ImgSwitch } from '@/components/ui/img-switch';
+import { ImageGeneration } from '@/components/ui/ai-chat-image-generation-1';
 import { toast } from 'sonner';
 import {
   MessageBranch,
@@ -48,7 +51,7 @@ import {
   PromptInputActionAddAttachments,
   type PromptInputMessage,
 } from '@/components/ai-elements/prompt-input';
-import { CopyIcon, TrashIcon, EditIcon, CheckIcon as CheckIconLucide, XIcon, PlusIcon, SlidersHorizontalIcon } from 'lucide-react';
+import { CopyIcon, TrashIcon, EditIcon, CheckIcon as CheckIconLucide, XIcon, PlusIcon, SlidersHorizontalIcon, DownloadIcon, InfoIcon } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import {
@@ -74,6 +77,11 @@ interface MessageType {
     id: string;
     content: string;
     thinkingContent?: string;
+    // 图片生成相关
+    generatedImage?: {
+      data: string; // Base64 编码的图片数据
+      mimeType: string;
+    };
   }[];
   attachments?: Array<{
     type: 'file';
@@ -83,6 +91,31 @@ interface MessageType {
   }>;
 }
 
+interface ImageGenConfig {
+  aspectRatio: ImageAspectRatio;
+  imageSize: ImageSize;
+}
+
+// 检测是否为图片生成模型（支持双模式的模型）
+const isImageGenerationModel = (modelName: string): boolean => {
+  const lowerName = modelName.toLowerCase();
+  return lowerName.includes('image') ||
+         lowerName.includes('imagen') ||
+         (lowerName.includes('gemini') && lowerName.includes('image'));
+};
+
+// 检测模型是否支持图片尺寸控制
+// gemini-2.5-flash-image 不支持 imageSize，gemini-2.5-pro-image 支持
+const supportsImageSize = (modelName: string): boolean => {
+  const lowerName = modelName.toLowerCase();
+  // gemini-2.5-flash-image 不支持 imageSize
+  if (lowerName.includes('flash') && lowerName.includes('image')) {
+    return false;
+  }
+  // gemini-2.5-pro-image 和其他模型支持
+  return true;
+};
+
 interface ModelConfig {
   temperature: number;
   maxTokens: number;
@@ -91,10 +124,32 @@ interface ModelConfig {
   presencePenalty: number;
 }
 
+const ANTIGRAVITY_MODELS: Record<string, string> = {
+  'gemini-2.5-flash': 'Gemini 2.5 Flash',
+  'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
+  'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash (Thinking)',
+  'gemini-2.5-flash-image': 'Gemini 2.5 Flash Image',
+  'gemini-3-pro-low': 'Gemini 3 Pro (Low)',
+  'gemini-3-pro-high': 'Gemini 3 Pro (High)',
+  'gemini-3-pro-image': 'Gemini 3 Pro Image',
+  'rev19-uic3-1p': 'Rev19 UIC3 1P',
+  'gpt-oss-120b-medium': 'GPT OSS 120B (Medium)',
+  'claude-sonnet-4-5': 'Claude Sonnet 4.5',
+  'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 (Thinking)',
+  'claude-opus-4-5-thinking': 'Claude Opus 4.5 (Thinking)',
+};
+
+const KIRO_MODELS: Record<string, string> = {
+  'claude-sonnet-4-20250514': 'Claude Sonnet 4',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+  'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
+  'claude-opus-4-5-20251101': 'Claude Opus 4.5',
+};
+
 // 模型提供商映射
 const getModelProvider = (modelName: string): { chef: string; chefSlug: string } => {
   const lowerName = modelName.toLowerCase();
-  if (lowerName.includes('gpt') || lowerName.includes('openai')) {
+  if (lowerName.includes('gpt') || lowerName.includes('openai') || lowerName.includes('oss')) {
     return { chef: 'OpenAI', chefSlug: 'openai' };
   } else if (lowerName.includes('claude') || lowerName.includes('anthropic')) {
     return { chef: 'Anthropic', chefSlug: 'anthropic' };
@@ -102,37 +157,57 @@ const getModelProvider = (modelName: string): { chef: string; chefSlug: string }
     return { chef: 'Google', chefSlug: 'google' };
   } else if (lowerName.includes('llama') || lowerName.includes('meta')) {
     return { chef: 'Meta', chefSlug: 'meta' };
+  } else if (lowerName.includes('rev') || lowerName.includes('uic')) {
+    return { chef: 'Other', chefSlug: 'unknown' };
   }
-  return { chef: '未知提供商', chefSlug: 'unknown' };
+  return { chef: 'Other', chefSlug: 'unknown' };
 };
 
-// 格式化模型名称
-const formatModelName = (modelName: string): string => {
-  let name = modelName.replace(/^(openai\/|anthropic\/|google\/|meta\/)/, '');
-  name = name.replace(/(\d+)-(\d+)/g, '$1.$2');
-  const parts = name.split(/[-_]/).filter(part => part.length > 0);
-  return parts
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+// 获取所有模型列表（包含 API 类型信息）
+const getAllModels = (): Array<{
+  id: string;
+  name: string;
+  chef: string;
+  chefSlug: string;
+  apiType: ApiType;
+}> => {
+  const antigravityModels = Object.entries(ANTIGRAVITY_MODELS).map(([id, name]) => {
+    const provider = getModelProvider(id);
+    return {
+      id,
+      name,
+      chef: provider.chef,
+      chefSlug: provider.chefSlug,
+      apiType: 'antigravity' as ApiType,
+    };
+  });
+  
+  const kiroModels = Object.entries(KIRO_MODELS).map(([id, name]) => {
+    const provider = getModelProvider(id);
+    return {
+      id,
+      name,
+      chef: provider.chef,
+      chefSlug: provider.chefSlug,
+      apiType: 'kiro' as ApiType,
+    };
+  });
+  
+  return [...antigravityModels, ...kiroModels];
 };
 
 export default function PlaygroundPage() {
-  const [models, setModels] = useState<Array<{
-    id: string;
-    name: string;
-    chef: string;
-    chefSlug: string;
-    providers: string[];
-    quota?: string;
-    maxQuota?: string;
-  }>>([]);
+  // API 类型状态
+  const [apiType, setApiType] = useState<ApiType>('antigravity');
+  
+  // 获取所有模型列表
+  const allModels = getAllModels();
+  
   const [model, setModel] = useState<string>('');
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
-  const [text, setText] = useState<string>('');
   const [status, setStatus] = useState<'submitted' | 'streaming' | 'ready' | 'error'>('ready');
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingContent, setEditingContent] = useState<string>('');
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -143,45 +218,186 @@ export default function PlaygroundPage() {
     frequencyPenalty: 0,
     presencePenalty: 0,
   });
+  
+  // 图片生成配置
+  const [imageConfig, setImageConfig] = useState<ImageGenConfig>({
+    aspectRatio: '1:1',
+    imageSize: '1K',
+  });
 
-  // 加载用户可用的模型
+  // 图片生成模式（'chat' 或 'image'）
+  const [imageModelMode, setImageModelMode] = useState<string | null>('chat');
+
+  // 处理模式切换，切换时清空对话内容
+  const handleModeChange = useCallback((newMode: string | null) => {
+    if (newMode !== imageModelMode) {
+      setMessages([]);
+      setImageModelMode(newMode);
+    }
+  }, [imageModelMode]);
+
+  // 当选择模型时，自动设置对应的 API 类型
+  const handleModelSelect = useCallback((modelId: string, modelApiType: ApiType) => {
+    setModel(modelId);
+    if (modelApiType !== apiType) {
+      setApiType(modelApiType);
+      setMessages([]); // 切换 API 类型时清空对话
+    }
+    setModelSelectorOpen(false);
+  }, [apiType]);
+
+  // 初始化时设置默认模型
   useEffect(() => {
-    const loadModels = async () => {
-      try {
-        setLoading(true);
-        const quotas = await getUserQuotas();
+    if (allModels.length > 0 && !model) {
+      setModel(allModels[0].id);
+    }
+  }, [allModels, model]);
 
-        // 将配额数据转换为模型列表
-        const modelList = quotas.map((quota: UserQuotaItem) => {
-          const provider = getModelProvider(quota.model_name);
-          return {
-            id: quota.model_name,
-            name: formatModelName(quota.model_name),
-            chef: provider.chef,
-            chefSlug: provider.chefSlug,
-            providers: [provider.chefSlug],
-            quota: quota.quota,
-            maxQuota: quota.max_quota,
-          };
-        });
+  // 检测当前选择的模型是否为图片生成模型
+  const isImageModel = model ? isImageGenerationModel(model) : false;
+  
+  // 当前是否处于图片生成模式（模型支持图片生成且用户选择了图片生成模式）
+  const isInImageGenerationMode = isImageModel && imageModelMode === 'image';
 
-        setModels(modelList);
+  const selectedModelData = allModels.find((m) => m.id === model);
 
-        // 设置默认选中第一个模型
-        if (modelList.length > 0 && !model) {
-          setModel(modelList[0].id);
-        }
-      } catch (error) {
-        console.error('Failed to load models:', error);
-      } finally {
-        setLoading(false);
+  // 发送图片生成请求
+  // Imagen 模式下每次生成都是独立上下文，API 不发送对话历史，但 UI 会显示之前的消息
+  const sendImageGenerationRequest = useCallback(
+    async (prompt: string) => {
+      if (!model) {
+        toast.error('请先选择一个模型');
+        return;
       }
-    };
 
-    loadModels();
-  }, []);
+      const userMessage: MessageType = {
+        key: `user-${Date.now()}`,
+        from: 'user',
+        versions: [
+          {
+            id: `user-${Date.now()}`,
+            content: prompt,
+          },
+        ],
+      };
 
-  const selectedModelData = models.find((m) => m.id === model);
+      // UI 显示之前的消息，但 API 请求只发送当前 prompt（generateImage 函数已实现）
+      setMessages((prev) => [...prev, userMessage]);
+      setStatus('streaming');
+
+      const assistantMessageId = `assistant-${Date.now()}`;
+      const assistantMessage: MessageType = {
+        key: `assistant-${Date.now()}`,
+        from: 'assistant',
+        versions: [
+          {
+            id: assistantMessageId,
+            content: '',
+          },
+        ],
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+      setStreamingMessageId(assistantMessageId);
+
+      // 根据模型是否支持 imageSize 来构建配置
+      const imageGenConfig: { aspectRatio: ImageAspectRatio; imageSize?: ImageSize } = {
+        aspectRatio: imageConfig.aspectRatio,
+      };
+      
+      // 只有支持 imageSize 的模型才发送该参数
+      if (supportsImageSize(model)) {
+        imageGenConfig.imageSize = imageConfig.imageSize;
+      }
+
+      try {
+        const response = await generateImage(
+          {
+            model,
+            prompt,
+            imageConfig: imageGenConfig,
+            apiType,
+          },
+          (error) => {
+            console.error('Image generation error:', error);
+            toast.error(`图片生成失败: ${error.message}`);
+          }
+        );
+
+        if (response && response.candidates && response.candidates.length > 0) {
+          const candidate = response.candidates[0];
+          // 遍历所有 parts 查找 inlineData（图片数据可能不在第一个 part 中）
+          const parts = candidate.content?.parts || [];
+          let imageData: { data: string; mimeType: string } | null = null;
+          let textContent = '';
+          
+          for (const part of parts) {
+            if (part.inlineData) {
+              imageData = {
+                data: part.inlineData.data,
+                mimeType: part.inlineData.mimeType,
+              };
+            } else if (part.text) {
+              textContent += part.text;
+            }
+          }
+          
+          if (imageData) {
+            setMessages((prev) =>
+              prev.map((msg) => {
+                if (msg.versions.some((v) => v.id === assistantMessageId)) {
+                  return {
+                    ...msg,
+                    versions: msg.versions.map((v) =>
+                      v.id === assistantMessageId
+                        ? {
+                            ...v,
+                            content: textContent.trim(),
+                            generatedImage: imageData!,
+                          }
+                        : v
+                    ),
+                  };
+                }
+                return msg;
+              })
+            );
+          } else {
+            throw new Error('响应中没有图片数据');
+          }
+        } else {
+          throw new Error('图片生成失败，未收到有效响应');
+        }
+
+        setStatus('ready');
+        setStreamingMessageId(null);
+      } catch (error) {
+        console.error('Image generation error:', error);
+        toast.error('图片生成失败，请重试');
+        
+        // 更新消息显示错误
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.versions.some((v) => v.id === assistantMessageId)) {
+              return {
+                ...msg,
+                versions: msg.versions.map((v) =>
+                  v.id === assistantMessageId
+                    ? { ...v, content: '图片生成失败，请重试' }
+                    : v
+                ),
+              };
+            }
+            return msg;
+          })
+        );
+        
+        setStatus('error');
+        setStreamingMessageId(null);
+      }
+    },
+    [model, imageConfig, apiType]
+  );
 
   // 发送聊天请求
   const sendChatRequest = useCallback(
@@ -277,6 +493,7 @@ export default function PlaygroundPage() {
 
       try {
         let fullContent = '';
+        let fullReasoningContent = '';
 
         await sendChatCompletionStream(
           {
@@ -287,14 +504,17 @@ export default function PlaygroundPage() {
             top_p: config.topP,
             frequency_penalty: config.frequencyPenalty,
             presence_penalty: config.presencePenalty,
+            apiType,
           },
-          (chunk) => {
-            fullContent += chunk;
-
-            // 解析 <think> 标签
-            const thinkMatch = fullContent.match(/<think>([\s\S]*?)<\/think>/);
-            const thinkingContent = thinkMatch ? thinkMatch[1] : '';
-            const responseContent = fullContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+          (chunk, reasoningChunk) => {
+            // 累积正常内容
+            if (chunk) {
+              fullContent += chunk;
+            }
+            // 累积思维链内容
+            if (reasoningChunk) {
+              fullReasoningContent += reasoningChunk;
+            }
 
             setMessages((prev) =>
               prev.map((msg) => {
@@ -303,7 +523,11 @@ export default function PlaygroundPage() {
                     ...msg,
                     versions: msg.versions.map((v) =>
                       v.id === assistantMessageId
-                        ? { ...v, content: responseContent, thinkingContent }
+                        ? {
+                            ...v,
+                            content: fullContent,
+                            thinkingContent: fullReasoningContent || undefined
+                          }
                         : v
                     ),
                   };
@@ -330,7 +554,7 @@ export default function PlaygroundPage() {
         setStreamingMessageId(null);
       }
     },
-    [model, messages, config]
+    [model, messages, config, apiType]
   );
 
   const handleSubmit = (message: PromptInputMessage) => {
@@ -342,8 +566,16 @@ export default function PlaygroundPage() {
     }
 
     setStatus('submitted');
-    sendChatRequest(message.text || '', message.files);
-    setText('');
+    
+    // 根据模型类型和模式选择不同的处理方式
+    if (isInImageGenerationMode) {
+      // 图片生成模式
+      sendImageGenerationRequest(message.text || '');
+    } else {
+      // 聊天模式（包括普通模型和图片模型的对话模式）
+      sendChatRequest(message.text || '', message.files);
+    }
+    // 不需要手动清空 text，PromptInputProvider 会在 onSubmit 完成后自动清空
   };
 
   // 复制消息内容
@@ -409,119 +641,216 @@ export default function PlaygroundPage() {
     }
   }, [editingContent]);
 
+  // 宽高比选项
+  const aspectRatioOptions: { value: ImageAspectRatio; label: string }[] = [
+    { value: '1:1', label: '1:1' },
+    { value: '2:3', label: '2:3' },
+    { value: '3:2', label: '3:2' },
+    { value: '3:4', label: '3:4' },
+    { value: '4:3', label: '4:3' },
+    { value: '9:16', label: '9:16' },
+    { value: '16:9', label: '16:9' },
+    { value: '21:9', label: '21:9' },
+  ];
+
+  // 图片尺寸选项
+  const imageSizeOptions: { value: ImageSize; label: string }[] = [
+    { value: '1K', label: '1K' },
+    { value: '2K', label: '2K' },
+    { value: '4K', label: '4K' },
+  ];
+
+  // 下载生成的图片
+  const handleDownloadImage = useCallback((data: string, mimeType: string) => {
+    const link = document.createElement('a');
+    link.href = `data:${mimeType};base64,${data}`;
+    link.download = `generated-image-${Date.now()}.${mimeType.split('/')[1] || 'png'}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('图片已下载');
+  }, []);
+
   return (
     <div className="flex gap-4 py-4 md:gap-6 md:py-6 h-[calc(100vh-var(--header-height)-2rem)] px-2 md:px-4 lg:px-6">
       {/* 左侧：模型配置 - 桌面端 */}
       <Card className="hidden lg:flex w-80 shrink-0 flex-col">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 pb-8">
-            模型参数
+            {isInImageGenerationMode ? '图片生成参数' : '模型参数'}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-12 overflow-y-auto overflow-x-hidden h-full">
-          {/* Temperature */}
-          <div className="space-y-10">
-            <Label>
-              <Tooltip
-                content="控制输出的随机性。较高的值（如 1.8）会使输出更随机和创造性，较低的值（如 0.2）会使其更确定和专注。"
-              >
-                <span className="cursor-help font-medium">Temperature</span>
-              </Tooltip>
-            </Label>
-            <Slider
-              value={[config.temperature]}
-              onValueChange={(value: number[]) =>
-                setConfig(prev => ({ ...prev, temperature: value[0] }))
-              }
-              min={0}
-              max={2}
-              step={0.1}
-              aria-label="Temperature"
-            />
-          </div>
+          {isInImageGenerationMode ? (
+            <>
+              {/* 图片生成配置 */}
+              {/* Aspect Ratio */}
+              <div className="space-y-4">
+                <Label>
+                  <Tooltip content="生成图片的宽高比。不同的宽高比适合不同的使用场景。">
+                    <span className="cursor-help font-medium">宽高比</span>
+                  </Tooltip>
+                </Label>
+                <Select
+                  value={imageConfig.aspectRatio}
+                  onValueChange={(value: ImageAspectRatio) =>
+                    setImageConfig(prev => ({ ...prev, aspectRatio: value }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择宽高比" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {aspectRatioOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          {/* Max Tokens */}
-          <div className="space-y-10">
-            <Label htmlFor="maxTokens">
-              <Tooltip
-                content="生成的最大 token 数量。一个 token 大约相当于 4 个字符或 0.75 个单词。更高的值允许更长的响应，但也会增加成本和延迟。"
-              >
-                <span className="cursor-help font-medium">Max Tokens</span>
-              </Tooltip>
-            </Label>
-            <Input
-              id="maxTokens"
-              type="number"
-              value={config.maxTokens}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setConfig(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))
-              }
-              className="w-full"
-            />
-          </div>
+              {/* Image Size */}
+              <div className="space-y-4">
+                <Label>
+                  <Tooltip content={supportsImageSize(model) ? "生成图片的分辨率。更高的分辨率会产生更清晰的图片，但可能需要更长的生成时间。" : "当前模型不支持图片尺寸控制"}>
+                    <span className={`cursor-help font-medium ${!supportsImageSize(model) ? 'text-muted-foreground' : ''}`}>图片尺寸</span>
+                  </Tooltip>
+                </Label>
+                <Select
+                  value={imageConfig.imageSize}
+                  onValueChange={(value: ImageSize) =>
+                    setImageConfig(prev => ({ ...prev, imageSize: value }))
+                  }
+                  disabled={!supportsImageSize(model)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择图片尺寸" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {imageSizeOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          {/* Top P */}
-          <div className="space-y-10">
-            <Label>
-              <Tooltip
-                content="核采样参数。控制模型考虑的 token 范围。例如，0.1 意味着只考虑概率最高的 10% 的 token。较低的值使输出更确定，较高的值增加多样性。"
-              >
-                <span className="cursor-help font-medium">Top P</span>
-              </Tooltip>
-            </Label>
-            <Slider
-              value={[config.topP]}
-              onValueChange={(value: number[]) =>
-                setConfig(prev => ({ ...prev, topP: value[0] }))
-              }
-              min={0}
-              max={1}
-              step={0.1}
-              aria-label="Top P"
-            />
-          </div>
+              {/* 提示信息 */}
+              <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground space-y-2">
+                <div className='flex flex-row'><InfoIcon className='size-4 text-gray-500 shrink-0 mt-0.5 mr-1'/> 你正处于 Imagen 模式</div>
+                <p className='text-xs'>在此模式下，你可以控制图片生成的参数，但每一次生成都是独立上下文。请随时切换到Chat模式以连续对话。如果切换，你的聊天内容将被清空，请注意保存生成的图片。</p>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* 聊天模型配置 */}
+              {/* Temperature */}
+              <div className="space-y-10">
+                <Label>
+                  <Tooltip
+                    content="控制输出的随机性。较高的值（如 1.8）会使输出更随机和创造性，较低的值（如 0.2）会使其更确定和专注。"
+                  >
+                    <span className="cursor-help font-medium">Temperature</span>
+                  </Tooltip>
+                </Label>
+                <Slider
+                  value={[config.temperature]}
+                  onValueChange={(value: number[]) =>
+                    setConfig(prev => ({ ...prev, temperature: value[0] }))
+                  }
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  aria-label="Temperature"
+                />
+              </div>
 
-          {/* Frequency Penalty */}
-          <div className="space-y-10">
-            <Label>
-              <Tooltip
-                content="降低重复相同内容的可能性。正值会根据 token 在文本中出现的频率来惩罚它们，减少逐字重复的可能性。"
-              >
-                <span className="cursor-help font-medium">Frequency Penalty</span>
-              </Tooltip>
-            </Label>
-            <Slider
-              value={[config.frequencyPenalty]}
-              onValueChange={(value: number[]) =>
-                setConfig(prev => ({ ...prev, frequencyPenalty: value[0] }))
-              }
-              min={-2}
-              max={2}
-              step={0.01}
-              aria-label="Frequency Penalty"
-            />
-          </div>
+              {/* Max Tokens */}
+              <div className="space-y-10">
+                <Label htmlFor="maxTokens">
+                  <Tooltip
+                    content="生成的最大 token 数量。一个 token 大约相当于 4 个字符或 0.75 个单词。更高的值允许更长的响应，但也会增加成本和延迟。"
+                  >
+                    <span className="cursor-help font-medium">Max Tokens</span>
+                  </Tooltip>
+                </Label>
+                <Input
+                  id="maxTokens"
+                  type="number"
+                  value={config.maxTokens}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setConfig(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))
+                  }
+                  className="w-full"
+                />
+              </div>
 
-          {/* Presence Penalty */}
-          <div className="space-y-10">
-            <Label>
-              <Tooltip
-                content="增加谈论新话题的可能性。正值会根据 token 是否已经出现在文本中来惩罚它们，鼓励模型探索新的主题和概念。"
-              >
-                <span className="cursor-help font-medium">Presence Penalty</span>
-              </Tooltip>
-            </Label>
-            <Slider
-              value={[config.presencePenalty]}
-              onValueChange={(value: number[]) =>
-                setConfig(prev => ({ ...prev, presencePenalty: value[0] }))
-              }
-              min={-2}
-              max={2}
-              step={0.01}
-              aria-label="Presence Penalty"
-            />
-          </div>
+              {/* Top P */}
+              <div className="space-y-10">
+                <Label>
+                  <Tooltip
+                    content="核采样参数。控制模型考虑的 token 范围。例如，0.1 意味着只考虑概率最高的 10% 的 token。较低的值使输出更确定，较高的值增加多样性。"
+                  >
+                    <span className="cursor-help font-medium">Top P</span>
+                  </Tooltip>
+                </Label>
+                <Slider
+                  value={[config.topP]}
+                  onValueChange={(value: number[]) =>
+                    setConfig(prev => ({ ...prev, topP: value[0] }))
+                  }
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  aria-label="Top P"
+                />
+              </div>
+
+              {/* Frequency Penalty */}
+              <div className="space-y-10">
+                <Label>
+                  <Tooltip
+                    content="降低重复相同内容的可能性。正值会根据 token 在文本中出现的频率来惩罚它们，减少逐字重复的可能性。"
+                  >
+                    <span className="cursor-help font-medium">Frequency Penalty</span>
+                  </Tooltip>
+                </Label>
+                <Slider
+                  value={[config.frequencyPenalty]}
+                  onValueChange={(value: number[]) =>
+                    setConfig(prev => ({ ...prev, frequencyPenalty: value[0] }))
+                  }
+                  min={-2}
+                  max={2}
+                  step={0.01}
+                  aria-label="Frequency Penalty"
+                />
+              </div>
+
+              {/* Presence Penalty */}
+              <div className="space-y-10">
+                <Label>
+                  <Tooltip
+                    content="增加谈论新话题的可能性。正值会根据 token 是否已经出现在文本中来惩罚它们，鼓励模型探索新的主题和概念。"
+                  >
+                    <span className="cursor-help font-medium">Presence Penalty</span>
+                  </Tooltip>
+                </Label>
+                <Slider
+                  value={[config.presencePenalty]}
+                  onValueChange={(value: number[]) =>
+                    setConfig(prev => ({ ...prev, presencePenalty: value[0] }))
+                  }
+                  min={-2}
+                  max={2}
+                  step={0.01}
+                  aria-label="Presence Penalty"
+                />
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -536,92 +865,163 @@ export default function PlaygroundPage() {
           </SheetTrigger>
           <SheetContent side="bottom" className="h-[85vh] p-0">
           <SheetHeader className="px-6 py-4 border-b">
-            <SheetTitle>模型参数</SheetTitle>
+            <SheetTitle>{isInImageGenerationMode ? '图片生成参数' : '模型参数'}</SheetTitle>
           </SheetHeader>
           <div className="space-y-12 overflow-y-auto overflow-x-hidden h-[calc(100%-4rem)] px-6 py-6">
-            {/* Temperature */}
-            <div className="space-y-10">
-              <Label>
-                <Tooltip content="控制输出的随机性。较高的值（如 1.8）会使输出更随机和创造性，较低的值（如 0.2）会使其更确定和专注。">
-                  <span className="cursor-help font-medium">Temperature</span>
-                </Tooltip>
-              </Label>
-              <Slider
-                value={[config.temperature]}
-                onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, temperature: value[0] }))}
-                min={0}
-                max={2}
-                step={0.1}
-                aria-label="Temperature"
-              />
-            </div>
+            {isInImageGenerationMode ? (
+              <>
+                {/* 图片生成配置 - 移动端 */}
+                {/* Aspect Ratio */}
+                <div className="space-y-4">
+                  <Label>
+                    <Tooltip content="生成图片的宽高比。不同的宽高比适合不同的使用场景。">
+                      <span className="cursor-help font-medium">宽高比</span>
+                    </Tooltip>
+                  </Label>
+                  <Select
+                    value={imageConfig.aspectRatio}
+                    onValueChange={(value: ImageAspectRatio) =>
+                      setImageConfig(prev => ({ ...prev, aspectRatio: value }))
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="选择宽高比" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {aspectRatioOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {/* Max Tokens */}
-            <div className="space-y-10">
-              <Label htmlFor="maxTokens-mobile">
-                <Tooltip content="生成的最大 token 数量。一个 token 大约相当于 4 个字符或 0.75 个单词。更高的值允许更长的响应，但也会增加成本和延迟。">
-                  <span className="cursor-help font-medium">Max Tokens</span>
-                </Tooltip>
-              </Label>
-              <Input
-                id="maxTokens-mobile"
-                type="number"
-                value={config.maxTokens}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))}
-                className="w-full"
-              />
-            </div>
+                {/* Image Size */}
+                <div className="space-y-4">
+                  <Label>
+                    <Tooltip content={supportsImageSize(model) ? "生成图片的分辨率。更高的分辨率会产生更清晰的图片，但可能需要更长的生成时间。" : "当前模型不支持图片尺寸控制"}>
+                      <span className={`cursor-help font-medium ${!supportsImageSize(model) ? 'text-muted-foreground' : ''}`}>图片尺寸</span>
+                    </Tooltip>
+                  </Label>
+                  <Select
+                    value={imageConfig.imageSize}
+                    onValueChange={(value: ImageSize) =>
+                      setImageConfig(prev => ({ ...prev, imageSize: value }))
+                    }
+                    disabled={!supportsImageSize(model)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="选择图片尺寸" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {imageSizeOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {/* Top P */}
-            <div className="space-y-10">
-              <Label>
-                <Tooltip content="核采样参数。控制模型考虑的 token 范围。例如，0.1 意味着只考虑概率最高的 10% 的 token。较低的值使输出更确定，较高的值增加多样性。">
-                  <span className="cursor-help font-medium">Top P</span>
-                </Tooltip>
-              </Label>
-              <Slider
-                value={[config.topP]}
-                onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, topP: value[0] }))}
-                min={0}
-                max={1}
-                step={0.1}
-                aria-label="Top P"
-              />
-            </div>
+                {/* 提示信息 */}
+                <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
+                  <p className="font-medium mb-2">提示</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>输入描述性文字来生成图片</li>
+                    <li>描述越详细，生成效果越好</li>
+                    <li>支持中英文提示词</li>
+                  </ul>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* 聊天模型配置 - 移动端 */}
+                {/* Temperature */}
+                <div className="space-y-10">
+                  <Label>
+                    <Tooltip content="控制输出的随机性。较高的值（如 1.8）会使输出更随机和创造性，较低的值（如 0.2）会使其更确定和专注。">
+                      <span className="cursor-help font-medium">Temperature</span>
+                    </Tooltip>
+                  </Label>
+                  <Slider
+                    value={[config.temperature]}
+                    onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, temperature: value[0] }))}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    aria-label="Temperature"
+                  />
+                </div>
 
-            {/* Frequency Penalty */}
-            <div className="space-y-10">
-              <Label>
-                <Tooltip content="降低重复相同内容的可能性。正值会根据 token 在文本中出现的频率来惩罚它们，减少逐字重复的可能性。">
-                  <span className="cursor-help font-medium">Frequency Penalty</span>
-                </Tooltip>
-              </Label>
-              <Slider
-                value={[config.frequencyPenalty]}
-                onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, frequencyPenalty: value[0] }))}
-                min={-2}
-                max={2}
-                step={0.01}
-                aria-label="Frequency Penalty"
-              />
-            </div>
+                {/* Max Tokens */}
+                <div className="space-y-10">
+                  <Label htmlFor="maxTokens-mobile">
+                    <Tooltip content="生成的最大 token 数量。一个 token 大约相当于 4 个字符或 0.75 个单词。更高的值允许更长的响应，但也会增加成本和延迟。">
+                      <span className="cursor-help font-medium">Max Tokens</span>
+                    </Tooltip>
+                  </Label>
+                  <Input
+                    id="maxTokens-mobile"
+                    type="number"
+                    value={config.maxTokens}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfig(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))}
+                    className="w-full"
+                  />
+                </div>
 
-            {/* Presence Penalty */}
-            <div className="space-y-10">
-              <Label>
-                <Tooltip content="增加谈论新话题的可能性。正值会根据 token 是否已经出现在文本中来惩罚它们，鼓励模型探索新的主题和概念。">
-                  <span className="cursor-help font-medium">Presence Penalty</span>
-                </Tooltip>
-              </Label>
-              <Slider
-                value={[config.presencePenalty]}
-                onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, presencePenalty: value[0] }))}
-                min={-2}
-                max={2}
-                step={0.01}
-                aria-label="Presence Penalty"
-              />
-            </div>
+                {/* Top P */}
+                <div className="space-y-10">
+                  <Label>
+                    <Tooltip content="核采样参数。控制模型考虑的 token 范围。例如，0.1 意味着只考虑概率最高的 10% 的 token。较低的值使输出更确定，较高的值增加多样性。">
+                      <span className="cursor-help font-medium">Top P</span>
+                    </Tooltip>
+                  </Label>
+                  <Slider
+                    value={[config.topP]}
+                    onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, topP: value[0] }))}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                    aria-label="Top P"
+                  />
+                </div>
+
+                {/* Frequency Penalty */}
+                <div className="space-y-10">
+                  <Label>
+                    <Tooltip content="降低重复相同内容的可能性。正值会根据 token 在文本中出现的频率来惩罚它们，减少逐字重复的可能性。">
+                      <span className="cursor-help font-medium">Frequency Penalty</span>
+                    </Tooltip>
+                  </Label>
+                  <Slider
+                    value={[config.frequencyPenalty]}
+                    onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, frequencyPenalty: value[0] }))}
+                    min={-2}
+                    max={2}
+                    step={0.01}
+                    aria-label="Frequency Penalty"
+                  />
+                </div>
+
+                {/* Presence Penalty */}
+                <div className="space-y-10">
+                  <Label>
+                    <Tooltip content="增加谈论新话题的可能性。正值会根据 token 是否已经出现在文本中来惩罚它们，鼓励模型探索新的主题和概念。">
+                      <span className="cursor-help font-medium">Presence Penalty</span>
+                    </Tooltip>
+                  </Label>
+                  <Slider
+                    value={[config.presencePenalty]}
+                    onValueChange={(value: number[]) => setConfig(prev => ({ ...prev, presencePenalty: value[0] }))}
+                    min={-2}
+                    max={2}
+                    step={0.01}
+                    aria-label="Presence Penalty"
+                  />
+                </div>
+              </>
+            )}
           </div>
           </SheetContent>
         </Sheet>
@@ -690,9 +1090,28 @@ export default function PlaygroundPage() {
                               </div>
                             ) : (
                               <>
-                                {message.from === 'assistant' && streamingMessageId === version.id && !version.content ? (
-                                      <Spinner />
+                                {version.generatedImage ? (
+                                      // 图片生成完成：显示 ImageGeneration 组件包裹的图片
+                                      <ImageGeneration>
+                                        <img
+                                          src={`data:${version.generatedImage.mimeType};base64,${version.generatedImage.data}`}
+                                          alt="生成的图片"
+                                          className="max-w-full h-auto object-cover"
+                                          style={{ maxHeight: '512px' }}
+                                        />
+                                      </ImageGeneration>
+                                ) : message.from === 'assistant' && streamingMessageId === version.id && !version.content ? (
+                                      // 等待响应时显示 Spinner（聊天模式和图片生成模式都用）
+                                      <div className="flex items-center gap-3">
+                                        <Spinner />
+                                        {isInImageGenerationMode && (
+                                          <span className="text-sm text-muted-foreground">
+                                            图片生成中，这可能需要至多一分钟来完成。
+                                          </span>
+                                        )}
+                                      </div>
                                 ) : (
+                                  // 显示文本响应
                                   <MessageResponse>
                                     {version.content}
                                   </MessageResponse>
@@ -703,26 +1122,49 @@ export default function PlaygroundPage() {
                           {editingMessageId !== version.id && streamingMessageId !== version.id && (
                             <MessageToolbar className={`${message.from === 'user' ? 'justify-end' : ''} ${isLastMessage ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
                               <MessageActions>
-                                <MessageAction
-                                  onClick={() => handleCopyMessage(version.content)}
-                                  tooltip="复制"
-                                >
-                                  <CopyIcon className="size-4" />
-                                </MessageAction>
-                                <MessageAction
-                                  onClick={() => handleStartEdit(message.key, version.id, version.content)}
-                                  tooltip="编辑"
-                                >
-                                  <EditIcon className="size-4" />
-                                </MessageAction>
-                                <MessageAction
-                                  onClick={() => handleDeleteMessage(message.key)}
-                                  tooltip="删除"
-                                  variant="ghost"
-                                  className="hover:text-destructive"
-                                >
-                                  <TrashIcon className="size-4" />
-                                </MessageAction>
+                                {version.generatedImage ? (
+                                  // 图片消息的操作按钮
+                                  <>
+                                    <MessageAction
+                                      onClick={() => handleDownloadImage(version.generatedImage!.data, version.generatedImage!.mimeType)}
+                                      tooltip="下载图片"
+                                    >
+                                      <DownloadIcon className="size-4" />
+                                    </MessageAction>
+                                    <MessageAction
+                                      onClick={() => handleDeleteMessage(message.key)}
+                                      tooltip="删除"
+                                      variant="ghost"
+                                      className="hover:text-destructive"
+                                    >
+                                      <TrashIcon className="size-4" />
+                                    </MessageAction>
+                                  </>
+                                ) : (
+                                  // 文本消息的操作按钮
+                                  <>
+                                    <MessageAction
+                                      onClick={() => handleCopyMessage(version.content)}
+                                      tooltip="复制"
+                                    >
+                                      <CopyIcon className="size-4" />
+                                    </MessageAction>
+                                    <MessageAction
+                                      onClick={() => handleStartEdit(message.key, version.id, version.content)}
+                                      tooltip="编辑"
+                                    >
+                                      <EditIcon className="size-4" />
+                                    </MessageAction>
+                                    <MessageAction
+                                      onClick={() => handleDeleteMessage(message.key)}
+                                      tooltip="删除"
+                                      variant="ghost"
+                                      className="hover:text-destructive"
+                                    >
+                                      <TrashIcon className="size-4" />
+                                    </MessageAction>
+                                  </>
+                                )}
                               </MessageActions>
                             </MessageToolbar>
                           )}
@@ -751,10 +1193,7 @@ export default function PlaygroundPage() {
                   </PromptInputAttachments>
                 </PromptInputHeader>
                 <PromptInputBody>
-                  <PromptInputTextarea
-                    onChange={(event) => setText(event.target.value)}
-                    value={text}
-                  />
+                  <PromptInputTextarea />
                 </PromptInputBody>
                 <PromptInputFooter>
                   <PromptInputTools>
@@ -776,7 +1215,7 @@ export default function PlaygroundPage() {
                             <ModelSelectorLogo provider={selectedModelData.chefSlug} />
                           )}
                           {selectedModelData?.name && (
-                            <ModelSelectorName>
+                            <ModelSelectorName className="hidden sm:inline">
                               {selectedModelData.name}
                             </ModelSelectorName>
                           )}
@@ -785,46 +1224,76 @@ export default function PlaygroundPage() {
                       <ModelSelectorContent>
                         <ModelSelectorInput placeholder="搜索模型..." />
                         <ModelSelectorList>
-                          {loading ? (
-                            <div className="p-4 text-center text-sm text-muted-foreground">
-                              加载模型中...
-                            </div>
-                          ) : models.length === 0 ? (
+                          {allModels.length === 0 ? (
                             <div className="p-4 text-center text-sm text-muted-foreground">
                               暂无可用模型
                             </div>
                           ) : (
                             <>
                               <ModelSelectorEmpty>未找到模型。</ModelSelectorEmpty>
-                              {Array.from(new Set(models.map(m => m.chef))).map((chef) => (
-                                <ModelSelectorGroup key={chef} heading={chef}>
-                                  {models
-                                    .filter((m) => m.chef === chef)
-                                    .map((m) => (
-                                      <ModelSelectorItem
-                                        key={m.id}
-                                        onSelect={() => {
-                                          setModel(m.id);
-                                          setModelSelectorOpen(false);
-                                        }}
-                                        value={m.id}
-                                      >
-                                        <ModelSelectorLogo provider={m.chefSlug} />
-                                        <ModelSelectorName>{m.name}</ModelSelectorName>
-                                        {model === m.id ? (
-                                          <CheckIcon className="ml-auto size-4" />
-                                        ) : (
-                                          <div className="ml-auto size-4" />
-                                        )}
-                                      </ModelSelectorItem>
-                                    ))}
-                                </ModelSelectorGroup>
-                              ))}
+                              {/* Antigravity 模型组 */}
+                              <ModelSelectorGroup heading="Antigravity">
+                                {allModels
+                                  .filter((m) => m.apiType === 'antigravity')
+                                  .map((m) => (
+                                    <ModelSelectorItem
+                                      key={m.id}
+                                      onSelect={() => handleModelSelect(m.id, m.apiType)}
+                                      value={m.id}
+                                    >
+                                      <ModelSelectorLogo provider={m.chefSlug} />
+                                      <ModelSelectorName>{m.name}</ModelSelectorName>
+                                      {model === m.id ? (
+                                        <CheckIcon className="ml-auto size-4" />
+                                      ) : (
+                                        <div className="ml-auto size-4" />
+                                      )}
+                                    </ModelSelectorItem>
+                                  ))}
+                              </ModelSelectorGroup>
+                              {/* Kiro 模型组 */}
+                              <ModelSelectorGroup heading="Kiro">
+                                {allModels
+                                  .filter((m) => m.apiType === 'kiro')
+                                  .map((m) => (
+                                    <ModelSelectorItem
+                                      key={m.id}
+                                      onSelect={() => handleModelSelect(m.id, m.apiType)}
+                                      value={m.id}
+                                    >
+                                      <ModelSelectorLogo provider={m.chefSlug} />
+                                      <ModelSelectorName>{m.name}</ModelSelectorName>
+                                      {model === m.id ? (
+                                        <CheckIcon className="ml-auto size-4" />
+                                      ) : (
+                                        <div className="ml-auto size-4" />
+                                      )}
+                                    </ModelSelectorItem>
+                                  ))}
+                              </ModelSelectorGroup>
                             </>
                           )}
                         </ModelSelectorList>
                       </ModelSelectorContent>
                     </ModelSelector>
+                    {/* 图片生成模式切换 - 仅对图片生成模型显示 */}
+                    {isImageModel && (
+                      <ImgSwitch
+                        name="image-mode"
+                        size="small"
+                        value={imageModelMode}
+                        onChange={handleModeChange}
+                      >
+                        <ImgSwitch.Control
+                          label="Chat"
+                          value="chat"
+                        />
+                        <ImgSwitch.Control
+                          label="Imagen"
+                          value="image"
+                        />
+                      </ImgSwitch>
+                    )}
                   </PromptInputTools>
                   <PromptInputSubmit
                     disabled={status === 'streaming'}

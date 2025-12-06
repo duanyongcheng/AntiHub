@@ -966,6 +966,8 @@ export async function getSharedPoolStats(): Promise<SharedPoolStats> {
 
 // ==================== 聊天相关 API ====================
 
+export type ApiType = 'antigravity' | 'kiro';
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string | Array<{
@@ -984,16 +986,147 @@ export interface ChatCompletionRequest {
   frequency_penalty?: number;
   presence_penalty?: number;
   stream?: boolean;
+  apiType?: ApiType;
+}
+
+// ==================== 图片生成相关 API ====================
+
+export type ImageAspectRatio = '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '9:16' | '16:9' | '21:9';
+export type ImageSize = '1K' | '2K' | '4K';
+
+export interface ImageGenerationConfig {
+  aspectRatio?: ImageAspectRatio;
+  imageSize?: ImageSize;
+}
+
+export interface ImageGenerationRequest {
+  model: string;
+  prompt: string;
+  imageConfig?: ImageGenerationConfig;
+  apiType?: ApiType;
+}
+
+export interface ImageGenerationResponse {
+  candidates: Array<{
+    content: {
+      parts: Array<{
+        text?: string;
+        inlineData?: {
+          mimeType: string;
+          data: string; // Base64 编码的图片数据
+        };
+      }>;
+      role: string;
+    };
+    finishReason: string;
+  }>;
+}
+
+/**
+ * 生成图片
+ * POST /v1beta/models/{model}:generateContent
+ */
+export async function generateImage(
+  request: ImageGenerationRequest,
+  onError?: (error: Error) => void
+): Promise<ImageGenerationResponse | null> {
+  let token = getStoredToken();
+  if (!token) {
+    const error = new Error('未登录，请先登录');
+    onError?.(error);
+    throw error;
+  }
+
+  const makeRequest = async (authToken: string): Promise<Response> => {
+    const body = {
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: request.prompt,
+            },
+          ],
+        },
+      ],
+      generationConfig: request.imageConfig ? {
+        imageConfig: {
+          aspectRatio: request.imageConfig.aspectRatio,
+          imageSize: request.imageConfig.imageSize,
+        },
+      } : undefined,
+    };
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`,
+    };
+    
+    if (request.apiType) {
+      headers['X-Api-Type'] = request.apiType;
+    }
+
+    return fetch(`${API_BASE_URL}/v1beta/models/${request.model}:generateContent`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+  };
+
+  try {
+    let response = await makeRequest(token);
+
+    // 如果是 401 或 403 错误，尝试刷新 token
+    if (response.status === 401 || response.status === 403) {
+      console.log(`[generateImage] 检测到 ${response.status} 错误，准备刷新 token...`);
+
+      try {
+        console.log('[generateImage] 正在调用刷新接口...');
+        const refreshData = await refreshToken();
+        console.log('[generateImage] Token 刷新成功');
+        saveAuthCredentials(refreshData);
+        token = refreshData.access_token;
+        response = await makeRequest(token);
+      } catch (refreshError) {
+        console.error('[generateImage] Token 刷新失败:', refreshError);
+        clearAuthCredentials();
+        const error = new Error('Session expired, please login again');
+        onError?.(error);
+        throw error;
+      }
+    }
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({
+        detail: `HTTP ${response.status}: ${response.statusText}`
+      }));
+      const errorMessage = typeof error.detail === 'string'
+        ? error.detail
+        : Array.isArray(error.detail)
+        ? error.detail.map((e: any) => e.msg || e.message || JSON.stringify(e)).join(', ')
+        : error.error?.message || JSON.stringify(error.detail || error);
+      const err = new Error(errorMessage);
+      onError?.(err);
+      throw err;
+    }
+
+    const data: ImageGenerationResponse = await response.json();
+    return data;
+  } catch (error) {
+    onError?.(error as Error);
+    throw error;
+  }
 }
 
 /**
  * 发送聊天请求（流式）
  * 使用用户的 access_token 进行认证
  * 支持自动刷新 token
+ * 支持 reasoning_content（思维链）和 content（正常内容）
  */
 export async function sendChatCompletionStream(
   request: ChatCompletionRequest,
-  onChunk: (chunk: string) => void,
+  onChunk: (chunk: string, reasoningChunk?: string) => void,
   onError: (error: Error) => void,
   onComplete: () => void
 ): Promise<void> {
@@ -1003,14 +1136,23 @@ export async function sendChatCompletionStream(
   }
 
   const makeRequest = async (authToken: string): Promise<Response> => {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`,
+    };
+    
+    if (request.apiType) {
+      headers['X-Api-Type'] = request.apiType;
+    }
+
+    // 从请求体中移除 apiType，因为它只用于请求头
+    const { apiType, ...requestBody } = request;
+
     return fetch(`${API_BASE_URL}/v1/chat/completions`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`,
-      },
+      headers,
       body: JSON.stringify({
-        ...request,
+        ...requestBody,
         stream: true,
       }),
     });
@@ -1078,9 +1220,13 @@ export async function sendChatCompletionStream(
           try {
             const jsonStr = trimmedLine.slice(6);
             const data = JSON.parse(jsonStr);
-            const content = data.choices?.[0]?.delta?.content;
-            if (content) {
-              onChunk(content);
+            const delta = data.choices?.[0]?.delta;
+            const content = delta?.content;
+            const reasoningContent = delta?.reasoning_content;
+            
+            // 如果有内容或思维链内容，调用回调
+            if (content || reasoningContent) {
+              onChunk(content || '', reasoningContent);
             }
           } catch (e) {
             console.error('解析 SSE 数据失败:', e);

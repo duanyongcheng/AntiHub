@@ -434,25 +434,55 @@ export default function AccountsPage() {
     }
   };
 
+  const MODEL_ORDER: string[] = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-thinking',
+    'gemini-2.5-flash-image',
+    'gemini-2.5-pro',
+    'gemini-3-pro-low',
+    'gemini-3-pro-high',
+    'gemini-3-pro-image',
+    'chat_20706',
+    'chat_23310',
+    'rev19-uic3-1p',
+    'gpt-oss-120b-medium',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-thinking',
+    'claude-opus-4-5-thinking',
+  ];
+
   const getModelDisplayName = (model: string) => {
     const modelNames: Record<string, string> = {
-      'gemini-2.5-pro': 'Gemini 2.5 Pro',
       'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
-      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 Thinking',
-      'claude-opus-4-5-thinking': 'Claude Opus 4.5 Thinking',
+      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 (Thinking)',
+      'claude-opus-4-5-thinking': 'Claude Opus 4.5 (Thinking)',
       'gemini-2.5-flash-image': 'Gemini 2.5 Flash Image',
-      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash Thinking',
+      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash (Thinking)',
       'gemini-2.5-flash': 'Gemini 2.5 Flash',
-      'gpt-oss-120b-medium': 'GPT OSS 120B Medium',
+      'gpt-oss-120b-medium': 'GPT OSS 120B (Medium)',
       'gemini-3-pro-image': 'Gemini 3 Pro Image',
-      'gemini-3-pro-high': 'Gemini 3 Pro High',
-      'gemini-3-pro-low': 'Gemini 3 Pro Low',
+      'gemini-3-pro-high': 'Gemini 3 Pro (High)',
+      'gemini-3-pro-low': 'Gemini 3 Pro (Low)',
       'claude-sonnet-4-5': 'Claude Sonnet 4.5',
+      'rev19-uic3-1p': 'Rev19 UIC3 1P',
+      'gemini-2.5-pro': 'Gemini 2.5 Pro',
       'chat_20706': 'Chat 20706',
       'chat_23310': 'Chat 23310',
-      'rev19-uic3-1p': 'Rev19 UIC3 1P',
     };
     return modelNames[model] || model;
+  };
+
+  const sortQuotas = (quotaList: any[]) => {
+    if (!quotaList || !Array.isArray(quotaList)) return quotaList;
+    return [...quotaList].sort((a, b) => {
+      const indexA = MODEL_ORDER.indexOf(a.model_name);
+      const indexB = MODEL_ORDER.indexOf(b.model_name);
+      if (indexA === -1 && indexB === -1) return 0;
+      if (indexA === -1) return 1;
+      if (indexB === -1) return -1;
+      return indexA - indexB;
+    });
   };
 
   const getModelIcon = (modelName: string) => {
@@ -812,8 +842,8 @@ export default function AccountsPage() {
                 <MorphingSquare message="加载配额信息..." />
               </div>
             ) : quotas && Array.isArray(quotas) && quotas.length > 0 ? (
-              <div className="overflow-x-auto">
-                <div className="inline-block min-w-full align-middle px-2 md:px-0">
+              <div className="overflow-x-auto -mx-4 md:mx-0">
+                <div className="inline-block min-w-full align-middle px-4 md:px-0">
                   <div className="overflow-hidden">
                     <Table>
                       <TableHeader>
@@ -826,7 +856,7 @@ export default function AccountsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {quotas.map((quota: any) => (
+                        {sortQuotas(quotas).map((quota: any) => (
                           <TableRow key={quota.quota_id}>
                             <TableCell className="sticky left-0 bg-background z-10">
                               <div className="flex items-center gap-2">

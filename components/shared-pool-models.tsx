@@ -21,6 +21,25 @@ interface ModelData {
   stats: SharedPoolModelStats;
 }
 
+// 模型显示顺序（按用户指定的顺序）
+const MODEL_ORDER: string[] = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-thinking',
+    'gemini-2.5-flash-image',
+    'gemini-2.5-pro',
+    'gemini-3-pro-low',
+    'gemini-3-pro-high',
+    'gemini-3-pro-image',
+    'chat_20706',
+    'chat_23310',
+    'rev19-uic3-1p',
+    'gpt-oss-120b-medium',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-thinking',
+    'claude-opus-4-5-thinking',
+];
+
 export function SharedPoolModels() {
   const [models, setModels] = useState<ModelData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -30,12 +49,21 @@ export function SharedPoolModels() {
     const loadModels = async () => {
       try {
         const data = await getSharedPoolStats();
-        // 转换为数组并按配额从高到低排序
+        // 转换为数组并按指定顺序排序
         const modelArray = Object.entries(data.quotas_by_model).map(([name, stats]) => ({
           name,
           stats
         }));
-        const sorted = modelArray.sort((a, b) => b.stats.total_quota - a.stats.total_quota);
+        // 按指定顺序排序
+        const sorted = modelArray.sort((a, b) => {
+          const indexA = MODEL_ORDER.indexOf(a.name);
+          const indexB = MODEL_ORDER.indexOf(b.name);
+          // 如果模型不在列表中，放到最后
+          if (indexA === -1 && indexB === -1) return 0;
+          if (indexA === -1) return 1;
+          if (indexB === -1) return -1;
+          return indexA - indexB;
+        });
         setModels(sorted);
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载模型数据失败');
@@ -49,21 +77,21 @@ export function SharedPoolModels() {
 
   const getModelDisplayName = (model: string) => {
     const modelNames: Record<string, string> = {
-      'gemini-2.5-pro': 'Gemini 2.5 Pro',
       'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
-      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 Thinking',
-      'claude-opus-4-5-thinking': 'Claude Opus 4.5 Thinking',
+      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 (Thinking)',
+      'claude-opus-4-5-thinking': 'Claude Opus 4.5 (Thinking)',
       'gemini-2.5-flash-image': 'Gemini 2.5 Flash Image',
-      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash Thinking',
+      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash (Thinking)',
       'gemini-2.5-flash': 'Gemini 2.5 Flash',
-      'gpt-oss-120b-medium': 'GPT OSS 120B Medium',
+      'gpt-oss-120b-medium': 'GPT OSS 120B (Medium)',
       'gemini-3-pro-image': 'Gemini 3 Pro Image',
-      'gemini-3-pro-high': 'Gemini 3 Pro High',
-      'gemini-3-pro-low': 'Gemini 3 Pro Low',
+      'gemini-3-pro-high': 'Gemini 3 Pro (High)',
+      'gemini-3-pro-low': 'Gemini 3 Pro (Low)',
       'claude-sonnet-4-5': 'Claude Sonnet 4.5',
+      'rev19-uic3-1p': 'Rev19 UIC3 1P',
+      'gemini-2.5-pro': 'Gemini 2.5 Pro',
       'chat_20706': 'Chat 20706',
       'chat_23310': 'Chat 23310',
-      'rev19-uic3-1p': 'Rev19 UIC3 1P',
     };
     return modelNames[model] || model;
   };
@@ -159,11 +187,10 @@ export function SharedPoolModels() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <IconCpu className="size-5" />
           模型配额
         </CardTitle>
         <CardDescription>
-          共享池中有 {models.length} 个模型可用
+          Antigravity 共享池中有 {models.length} 个模型可用
         </CardDescription>
       </CardHeader>
       <CardContent>

@@ -232,7 +232,7 @@ export default function SettingsPage() {
             {apiKeys.length > 0 ? (
               <div className="space-y-3">
                 <Label className="text-sm font-medium">当前已创建{apiKeys.length}个密钥</Label>
-                <div className="border rounded-lg overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
+                <div className="border rounded-lg overflow-x-auto -mx-2 md:mx-0 border-x md:border-x">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b bg-muted/50">

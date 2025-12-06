@@ -43,17 +43,20 @@ import {
 import { MorphingSquare } from '@/components/ui/morphing-square';
 import { Gemini, Claude, OpenAI } from '@lobehub/icons';
 import Toaster, { ToasterRef } from '@/components/ui/toast';
-import {Badge as Badge1} from '@/components/ui/badge-1';
+import { Badge as Badge1 } from '@/components/ui/badge-1';
 
 export default function AnalyticsPage() {
   const toasterRef = useRef<ToasterRef>(null);
   const [quotas, setQuotas] = useState<UserQuotaItem[]>([]);
   const [consumptions, setConsumptions] = useState<QuotaConsumption[]>([]);
+  const [allConsumptions, setAllConsumptions] = useState<QuotaConsumption[]>([]); // 存储所有消费记录
   const [kiroStats, setKiroStats] = useState<KiroConsumptionStats | null>(null);
   const [kiroAccounts, setKiroAccounts] = useState<KiroAccount[]>([]);
   const [kiroLogs, setKiroLogs] = useState<KiroConsumptionLog[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
+  const [antigravityCurrentPage, setAntigravityCurrentPage] = useState(1); // Antigravity 分页
   const [totalRecords, setTotalRecords] = useState(0);
+  const [antigravityTotalRecords, setAntigravityTotalRecords] = useState(0); // Antigravity 总记录数
   const [hasBeta, setHasBeta] = useState(false);
   const [activeTab, setActiveTab] = useState<'antigravity' | 'kiro'>('antigravity');
   const [isLoading, setIsLoading] = useState(true);
@@ -61,7 +64,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     loadData();
-  }, [activeTab, currentPage]);
+  }, [activeTab, currentPage, antigravityCurrentPage]);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -72,10 +75,16 @@ export default function AnalyticsPage() {
       if (activeTab === 'antigravity') {
         const [quotasData, consumptionsData] = await Promise.all([
           getUserQuotas(),
-          getQuotaConsumption({ limit: 50 })
+          getQuotaConsumption({ limit: 1000 }) // 获取更多记录用于分页
         ]);
         setQuotas(quotasData);
-        setConsumptions(consumptionsData);
+        setAllConsumptions(consumptionsData);
+        setAntigravityTotalRecords(consumptionsData.length);
+
+        // 前端分页
+        const startIndex = (antigravityCurrentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        setConsumptions(consumptionsData.slice(startIndex, endIndex));
       } else if (activeTab === 'kiro' && user.beta === 1) {
         const [statsData, accountsData] = await Promise.all([
           getKiroConsumptionStats(),
@@ -143,32 +152,66 @@ export default function AnalyticsPage() {
     setCurrentPage(page);
   };
 
+  const handleAntigravityPageChange = (page: number) => {
+    setAntigravityCurrentPage(page);
+    // 前端分页，直接从 allConsumptions 中切片
+    const startIndex = (page - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    setConsumptions(allConsumptions.slice(startIndex, endIndex));
+  };
+
   const totalPages = Math.ceil(totalRecords / pageSize);
+  const antigravityTotalPages = Math.ceil(antigravityTotalRecords / pageSize);
+
+  const MODEL_ORDER: string[] = [
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash-thinking',
+    'gemini-2.5-flash-image',
+    'gemini-2.5-pro',
+    'gemini-3-pro-low',
+    'gemini-3-pro-high',
+    'gemini-3-pro-image',
+    'chat_20706',
+    'chat_23310',
+    'rev19-uic3-1p',
+    'gpt-oss-120b-medium',
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-thinking',
+    'claude-opus-4-5-thinking',
+  ];
 
   const getModelDisplayName = (model: string) => {
     const modelNames: Record<string, string> = {
-      'gemini-2.5-pro': 'Gemini 2.5 Pro',
       'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
-      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 Thinking',
-      'claude-opus-4-5-thinking': 'Claude Opus 4.5 Thinking',
+      'claude-sonnet-4-5-thinking': 'Claude Sonnet 4.5 (Thinking)',
+      'claude-opus-4-5-thinking': 'Claude Opus 4.5 (Thinking)',
       'gemini-2.5-flash-image': 'Gemini 2.5 Flash Image',
-      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash Thinking',
+      'gemini-2.5-flash-thinking': 'Gemini 2.5 Flash (Thinking)',
       'gemini-2.5-flash': 'Gemini 2.5 Flash',
-      'gpt-oss-120b-medium': 'GPT OSS 120B Medium',
+      'gemini-2.5-pro': 'Gemini 2.5 Pro',
+      'gpt-oss-120b-medium': 'GPT OSS 120B (Medium)',
       'gemini-3-pro-image': 'Gemini 3 Pro Image',
-      'gemini-3-pro-high': 'Gemini 3 Pro High',
-      'gemini-3-pro-low': 'Gemini 3 Pro Low',
+      'gemini-3-pro-high': 'Gemini 3 Pro (High)',
+      'gemini-3-pro-low': 'Gemini 3 Pro (Low)',
       'claude-sonnet-4-5': 'Claude Sonnet 4.5',
-      'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
-      'claude-sonnet-4-20250514': 'Claude Sonnet 4',
-      'claude-opus-4-5-20251101': 'Claude Opus 4.5',
-      'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+      'rev19-uic3-1p': 'Rev19 UIC3 1P',
       'chat_20706': 'Chat 20706',
       'chat_23310': 'Chat 23310',
-      'rev19-uic3-1p': 'Rev19 UIC3 1P',
     };
     return modelNames[model] || model;
   };
+
+  // 对配额列表按指定顺序排序
+  const sortedQuotas = [...quotas].sort((a, b) => {
+    const indexA = MODEL_ORDER.indexOf(a.model_name);
+    const indexB = MODEL_ORDER.indexOf(b.model_name);
+    // 如果模型不在列表中，放到最后
+    if (indexA === -1 && indexB === -1) return 0;
+    if (indexA === -1) return 1;
+    if (indexB === -1) return -1;
+    return indexA - indexB;
+  });
 
   const formatQuota = (quota: string) => {
     const num = parseFloat(quota);
@@ -276,7 +319,7 @@ export default function AnalyticsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {quotas.map((quotaItem) => {
+                      {sortedQuotas.map((quotaItem) => {
                         const current = parseFloat(quotaItem.quota);
                         const max = parseFloat(quotaItem.max_quota);
                         const usagePercent = max > 0 ? ((max - current) / max * 100).toFixed(1) : '0.0';
@@ -320,7 +363,7 @@ export default function AnalyticsPage() {
             <CardHeader>
               <CardTitle>使用记录</CardTitle>
               <CardDescription>
-                共 {consumptions.length} 条使用记录
+                共 {antigravityTotalRecords} 条使用记录
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -330,46 +373,102 @@ export default function AnalyticsPage() {
                   <p className="text-sm">立即创建您的 API Key 开始对话吧！</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="min-w-[150px]">账号 ID</TableHead>
-                        <TableHead className="min-w-[150px]">模型</TableHead>
-                        <TableHead className="min-w-[80px]">类型</TableHead>
-                        <TableHead className="min-w-[100px]">消耗配额</TableHead>
-                        <TableHead className="min-w-[150px]">时间</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {consumptions.map((consumption) => (
-                        <TableRow key={consumption.log_id}>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            <div className="max-w-[150px] truncate" title={consumption.cookie_id || '-'}>
-                              {consumption.cookie_id ? consumption.cookie_id : '-'}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="whitespace-nowrap">
-                              {getModelDisplayName(consumption.model_name)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={consumption.is_shared === 1 ? 'default' : 'secondary'} className="whitespace-nowrap">
-                              {consumption.is_shared === 1 ? '共享' : '专属'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-sm whitespace-nowrap">
-                            -{formatQuota(consumption.quota_consumed)}
-                          </TableCell>
-                          <TableCell className="text-sm whitespace-nowrap">
-                            {new Date(consumption.consumed_at).toLocaleString('zh-CN')}
-                          </TableCell>
+                <>
+                  <div className="overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="min-w-[150px]">账号 ID</TableHead>
+                          <TableHead className="min-w-[150px]">模型</TableHead>
+                          <TableHead className="min-w-[80px]">类型</TableHead>
+                          <TableHead className="min-w-[100px]">消耗配额</TableHead>
+                          <TableHead className="min-w-[150px]">时间</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                      </TableHeader>
+                      <TableBody>
+                        {consumptions.map((consumption) => (
+                          <TableRow key={consumption.log_id}>
+                            <TableCell className="font-mono text-xs text-muted-foreground">
+                              <div className="max-w-[150px] truncate" title={consumption.cookie_id || '-'}>
+                                {consumption.cookie_id ? consumption.cookie_id : '-'}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="whitespace-nowrap">
+                                {getModelDisplayName(consumption.model_name)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={consumption.is_shared === 1 ? 'default' : 'secondary'} className="whitespace-nowrap">
+                                {consumption.is_shared === 1 ? '共享' : '专属'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="font-mono text-sm whitespace-nowrap">
+                              -{formatQuota(consumption.quota_consumed)}
+                            </TableCell>
+                            <TableCell className="text-sm whitespace-nowrap">
+                              {new Date(consumption.consumed_at).toLocaleString('zh-CN')}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Antigravity 分页 */}
+                  {antigravityTotalPages > 1 && (
+                    <div className="mt-4 flex justify-center">
+                      <Pagination>
+                        <PaginationContent>
+                          <PaginationItem>
+                            <PaginationPrevious
+                              onClick={() => antigravityCurrentPage > 1 && handleAntigravityPageChange(antigravityCurrentPage - 1)}
+                              className={antigravityCurrentPage === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            />
+                          </PaginationItem>
+
+                          {Array.from({ length: Math.min(antigravityTotalPages, 5) }, (_, i) => {
+                            let pageNum;
+                            if (antigravityTotalPages <= 5) {
+                              pageNum = i + 1;
+                            } else if (antigravityCurrentPage <= 3) {
+                              pageNum = i + 1;
+                            } else if (antigravityCurrentPage >= antigravityTotalPages - 2) {
+                              pageNum = antigravityTotalPages - 4 + i;
+                            } else {
+                              pageNum = antigravityCurrentPage - 2 + i;
+                            }
+
+                            return (
+                              <PaginationItem key={pageNum}>
+                                <PaginationLink
+                                  onClick={() => handleAntigravityPageChange(pageNum)}
+                                  isActive={antigravityCurrentPage === pageNum}
+                                  className="cursor-pointer"
+                                >
+                                  {pageNum}
+                                </PaginationLink>
+                              </PaginationItem>
+                            );
+                          })}
+
+                          {antigravityTotalPages > 5 && antigravityCurrentPage < antigravityTotalPages - 2 && (
+                            <PaginationItem>
+                              <PaginationEllipsis />
+                            </PaginationItem>
+                          )}
+
+                          <PaginationItem>
+                            <PaginationNext
+                              onClick={() => antigravityCurrentPage < antigravityTotalPages && handleAntigravityPageChange(antigravityCurrentPage + 1)}
+                              className={antigravityCurrentPage === antigravityTotalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            />
+                          </PaginationItem>
+                        </PaginationContent>
+                      </Pagination>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>

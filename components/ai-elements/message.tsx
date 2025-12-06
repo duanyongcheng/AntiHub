@@ -23,6 +23,7 @@ import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
 import { Streamdown } from "streamdown";
 import { Reasoning, ReasoningTrigger, ReasoningContent } from "./reasoning";
+import { ImagePreview } from "@/components/ui/image-preview";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -321,6 +322,16 @@ export const MessageResponse = memo(
               <ReasoningTrigger />
               <ReasoningContent>{children}</ReasoningContent>
             </Reasoning>
+          ),
+          img: ({ src, alt }: { src?: string; alt?: string }) => (
+            <ImagePreview src={src}>
+              <img
+                src={src}
+                alt={alt || "图片"}
+                className="max-w-full h-auto rounded-lg"
+                style={{ maxHeight: '512px' }}
+              />
+            </ImagePreview>
           ),
         },
       } as any)}
