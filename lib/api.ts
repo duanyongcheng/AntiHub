@@ -700,6 +700,32 @@ export async function updateAccountStatus(cookieId: string, status: number): Pro
 }
 
 /**
+ * 转换账号类型（专属/共享）
+ * @param cookieId 账号的 Cookie ID
+ * @param isShared 账号类型：0=专属，1=共享
+ */
+export async function updateAccountType(cookieId: string, isShared: number): Promise<{
+  cookie_id: string;
+  is_shared: number;
+}> {
+  const result = await fetchWithAuth<{
+    success: boolean;
+    message: string;
+    data: {
+      cookie_id: string;
+      is_shared: number;
+    };
+  }>(
+    `${API_BASE_URL}/api/plugin-api/accounts/${cookieId}/type`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ is_shared: isShared }),
+    }
+  );
+  return result.data;
+}
+
+/**
  * 更新账号名称
  */
 export async function updateAccountName(cookieId: string, name: string): Promise<any> {
@@ -895,6 +921,16 @@ export interface SharedPoolModelQuota {
   last_fetched_at: string;
 }
 
+export interface UserConsumption {
+  total_requests: number;
+  total_quota_consumed: number;
+}
+
+export interface SharedPoolQuotasResponse {
+  quotas: SharedPoolModelQuota[];
+  user_consumption: UserConsumption;
+}
+
 export interface SharedPoolModelStats {
   total_quota: number;
   available_cookies: number;
@@ -943,14 +979,22 @@ export async function getQuotaConsumption(params?: {
 }
 
 /**
- * 获取共享��配额信息
+ * 获取共享池配额信息（新版本，包含用户消费统计）
  */
-export async function getSharedPoolQuotas(): Promise<SharedPoolModelQuota[]> {
-  const result = await fetchWithAuth<{ success: boolean; data: SharedPoolModelQuota[] }>(
+export async function getSharedPoolQuotas(): Promise<SharedPoolQuotasResponse> {
+  const result = await fetchWithAuth<{ success: boolean; data: SharedPoolQuotasResponse }>(
     `${API_BASE_URL}/api/plugin-api/quotas/shared-pool`,
     { method: 'GET' }
   );
   return result.data;
+}
+
+/**
+ * 获取共享池配额列表（仅配额列表，兼容旧代码）
+ */
+export async function getSharedPoolQuotasList(): Promise<SharedPoolModelQuota[]> {
+  const result = await getSharedPoolQuotas();
+  return result.quotas;
 }
 
 /**

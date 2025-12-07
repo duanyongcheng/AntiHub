@@ -6,6 +6,7 @@ import {
   deleteAccount,
   updateAccountStatus,
   updateAccountName,
+  updateAccountType,
   getAccountQuotas,
   updateQuotaStatus,
   getKiroAccounts,
@@ -48,7 +49,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip } from '@/components/ui/tooltip-card';
-import { IconCirclePlusFilled, IconDotsVertical, IconRefresh, IconTrash, IconToggleLeft, IconToggleRight, IconExternalLink, IconChartBar, IconChevronDown, IconEdit, IconAlertTriangle } from '@tabler/icons-react';
+import { IconCirclePlusFilled, IconDotsVertical, IconRefresh, IconTrash, IconToggleLeft, IconToggleRight, IconExternalLink, IconChartBar, IconChevronDown, IconEdit, IconAlertTriangle, IconArrowsExchange } from '@tabler/icons-react';
 import {
   Select,
   SelectContent,
@@ -96,6 +97,18 @@ export default function AccountsPage() {
   const [detailAccount, setDetailAccount] = useState<KiroAccount | null>(null);
   const [detailBalance, setDetailBalance] = useState<any>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+
+  // 确认对话框状态
+  const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    title: string;
+    description: string;
+    confirmText?: string;
+    cancelText?: string;
+    variant?: 'default' | 'destructive';
+    onConfirm: () => void;
+  } | null>(null);
+  const [isConfirmLoading, setIsConfirmLoading] = useState(false);
 
   const loadAccounts = async () => {
     try {
@@ -202,48 +215,123 @@ export default function AccountsPage() {
     }
   };
 
-  const handleDelete = async (cookieId: string) => {
-    if (!confirm('确定要删除这个Antigravity账号吗?')) return;
+  const showConfirmDialog = (config: {
+    title: string;
+    description: string;
+    confirmText?: string;
+    cancelText?: string;
+    variant?: 'default' | 'destructive';
+    onConfirm: () => void;
+  }) => {
+    setConfirmDialogConfig(config);
+    setIsConfirmDialogOpen(true);
+  };
 
+  const handleConfirmDialogConfirm = async () => {
+    if (!confirmDialogConfig) return;
+    setIsConfirmLoading(true);
     try {
-      await deleteAccount(cookieId);
-      setAccounts(accounts.filter(a => a.cookie_id !== cookieId));
-      toasterRef.current?.show({
-        title: '删除成功',
-        message: '账号已删除',
-        variant: 'success',
-        position: 'top-right',
-      });
-    } catch (err) {
-      toasterRef.current?.show({
-        title: '删除失败',
-        message: err instanceof Error ? err.message : '删除失败',
-        variant: 'error',
-        position: 'top-right',
-      });
+      await confirmDialogConfig.onConfirm();
+    } finally {
+      setIsConfirmLoading(false);
+      setIsConfirmDialogOpen(false);
+      setConfirmDialogConfig(null);
     }
   };
 
-  const handleDeleteKiro = async (accountId: number) => {
-    if (!confirm('确定要删除这个Kiro账号吗?')) return;
+  const handleToggleAccountType = (account: Account) => {
+    const newIsShared = account.is_shared === 1 ? 0 : 1;
+    const typeText = newIsShared === 1 ? '共享' : '专属';
+    
+    showConfirmDialog({
+      title: `转换确认`,
+      description: newIsShared === 1
+        ? '转换为共享账号后，此账号将加入共享配额池供他人使用，你将获得两倍于当前账号配额的共享配额奖励。确实要继续吗？'
+        : '转换为专属账号后，此账号将仅供你个人使用，你的共享配额池可用配额将会相应减少。确实要继续吗？',
+      confirmText: '继续',
+      cancelText: '取消',
+      onConfirm: async () => {
+        try {
+          await updateAccountType(account.cookie_id, newIsShared);
+          setAccounts(accounts.map(a =>
+            a.cookie_id === account.cookie_id
+              ? { ...a, is_shared: newIsShared }
+              : a
+          ));
+          toasterRef.current?.show({
+            title: '类型已更新',
+            message: `账号已转换为${typeText}账号`,
+            variant: 'success',
+            position: 'top-right',
+          });
+        } catch (err) {
+          toasterRef.current?.show({
+            title: '转换失败',
+            message: err instanceof Error ? err.message : '转换账号类型失败',
+            variant: 'error',
+            position: 'top-right',
+          });
+        }
+      },
+    });
+  };
 
-    try {
-      await deleteKiroAccount(accountId);
-      setKiroAccounts(kiroAccounts.filter(a => a.account_id !== accountId));
-      toasterRef.current?.show({
-        title: '删除成功',
-        message: 'Kiro账号已删除',
-        variant: 'success',
-        position: 'top-right',
-      });
-    } catch (err) {
-      toasterRef.current?.show({
-        title: '删除失败',
-        message: err instanceof Error ? err.message : '删除失败',
-        variant: 'error',
-        position: 'top-right',
-      });
-    }
+  const handleDelete = (cookieId: string) => {
+    showConfirmDialog({
+      title: '删除账号',
+      description: '确定要删除这个 Antigravity 账号吗？此操作无法撤销。',
+      confirmText: '删除',
+      cancelText: '取消',
+      variant: 'destructive',
+      onConfirm: async () => {
+        try {
+          await deleteAccount(cookieId);
+          setAccounts(accounts.filter(a => a.cookie_id !== cookieId));
+          toasterRef.current?.show({
+            title: '删除成功',
+            message: '账号已删除',
+            variant: 'success',
+            position: 'top-right',
+          });
+        } catch (err) {
+          toasterRef.current?.show({
+            title: '删除失败',
+            message: err instanceof Error ? err.message : '删除失败',
+            variant: 'error',
+            position: 'top-right',
+          });
+        }
+      },
+    });
+  };
+
+  const handleDeleteKiro = (accountId: number) => {
+    showConfirmDialog({
+      title: '删除账号',
+      description: '确定要删除这个 Kiro 账号吗？此操作无法撤销。',
+      confirmText: '删除',
+      cancelText: '取消',
+      variant: 'destructive',
+      onConfirm: async () => {
+        try {
+          await deleteKiroAccount(accountId);
+          setKiroAccounts(kiroAccounts.filter(a => a.account_id !== accountId));
+          toasterRef.current?.show({
+            title: '删除成功',
+            message: 'Kiro账号已删除',
+            variant: 'success',
+            position: 'top-right',
+          });
+        } catch (err) {
+          toasterRef.current?.show({
+            title: '删除失败',
+            message: err instanceof Error ? err.message : '删除失败',
+            variant: 'error',
+            position: 'top-right',
+          });
+        }
+      },
+    });
   };
 
   const handleToggleKiroStatus = async (account: KiroAccount) => {
@@ -676,6 +764,10 @@ export default function AccountsPage() {
                                   <DropdownMenuItem onClick={() => handleRenameAntigravity(account)}>
                                     <IconEdit className="size-4 mr-2" />
                                     重命名
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => handleToggleAccountType(account)}>
+                                    <IconArrowsExchange className="size-4 mr-2" />
+                                    转为{account.is_shared === 1 ? '专属' : '共享'}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => handleToggleStatus(account)}>
                                     {account.status === 1 ? (
@@ -1141,6 +1233,50 @@ export default function AccountsPage() {
               onClick={() => setIsKiroDetailDialogOpen(false)}
             >
               关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 确认对话框 */}
+      <Dialog open={isConfirmDialogOpen} onOpenChange={(open) => {
+        if (!isConfirmLoading) {
+          setIsConfirmDialogOpen(open);
+          if (!open) setConfirmDialogConfig(null);
+        }
+      }}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>{confirmDialogConfig?.title}</DialogTitle>
+            <DialogDescription>
+              {confirmDialogConfig?.description}
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsConfirmDialogOpen(false);
+                setConfirmDialogConfig(null);
+              }}
+              disabled={isConfirmLoading}
+            >
+              {confirmDialogConfig?.cancelText || '取消'}
+            </Button>
+            <Button
+              variant={confirmDialogConfig?.variant === 'destructive' ? 'destructive' : 'default'}
+              onClick={handleConfirmDialogConfirm}
+              disabled={isConfirmLoading}
+            >
+              {isConfirmLoading ? (
+                <>
+                  <MorphingSquare className="size-4 mr-2" />
+                  请稍等
+                </>
+              ) : (
+                confirmDialogConfig?.confirmText || '确认'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
